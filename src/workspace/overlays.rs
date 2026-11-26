@@ -321,6 +321,7 @@ impl Workspace {
                 )
             }
             Modal::Connection(form) => (580., form.clone().into_any_element()),
+            Modal::Import(form) => (480., form.clone().into_any_element()),
             Modal::Settings => return Some(self.preferences_view(c, cx)),
         };
         Some(

@@ -71,6 +71,7 @@ glyphs! {
     Plug => "plug.svg": r#"<path d="M8 14.5v-3M6 5V1.5M10 5V1.5M12 5v3a3.5 3.5 0 0 1-3.5 3.5h-1A3.5 3.5 0 0 1 4 8V5z"/>"#,
     Elephant => "elephant.svg": r#"<path fill="currentColor" stroke="none" fill-rule="evenodd" d="M1.6 12.8C1.2 11 1.8 9.2 2.6 7.8 3.2 5.2 5 3.6 7.4 3.6c1 0 1.8.3 2.4.7 2-.4 4.6.5 4.8 3.3V13h-2v-2.2H9.4V13h-2v-2.6c-.8 0-1.8-.5-2.4-1.2-.6.8-1.1 2-1.6 3.4zM5.2 5.45a.55.55 0 1 0 0 1.1.55.55 0 1 0 0-1.1zM7 5.1c1.3.1 2 1.2 1.9 2.4-.1 1-.9 1.8-2 1.8.7-.5 1.1-1.1 1.1-2S7.6 5.6 7 5.1z"/>"#,
     Feather => "feather.svg": r#"<path d="M13.8 2.2C8.6 2.6 4.6 6.4 3.6 12.8M13.8 2.2c.6 4.6-2.6 8.6-8.2 8.9M3.6 12.8 2.2 14.2M7.4 6.6l1.9 1.9M9.6 4.6l1.6 1.6"/>"#,
+    Bars => "bars.svg": r#"<path fill="currentColor" stroke="none" d="M2 2.5h1.8v11H2zM5 2.5h1.8v11H5zM8 2.5h1.8v11H8zM11 2.5h1.8v11H11zM14 6.6h1.4v2.8H14z"/>"#,
     Folder => "folder.svg": r#"<path d="M1.5 4a1 1 0 0 1 1-1h3.6l1.6 1.8h5.8a1 1 0 0 1 1 1V12.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"/>"#,
 }
 

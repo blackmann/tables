@@ -48,7 +48,7 @@ impl ConnectForm {
         let user = field("postgres", config.user.clone(), window, cx);
         let database = field("postgres", config.database.clone(), window, cx);
         let path = field("~/path/to/database.sqlite", config.path.clone(), window, cx);
-        let url = field("Paste a postgres:// URL to fill the form", String::new(), window, cx);
+        let url = field("Paste a postgres:// or clickhouse:// URL to fill the form", String::new(), window, cx);
         let subs = vec![cx.subscribe_in(&url, window, |f: &mut ConnectForm, input, e: &InputEvent, window, cx| {
             if matches!(e, InputEvent::Change) {
                 let text = input.read(cx).value().to_string();
@@ -83,7 +83,7 @@ impl ConnectForm {
         let v = |e: &Entity<InputState>| e.read(cx).value().trim().to_string();
         let mut c = self.config.clone();
         c.host = v(&self.host);
-        c.port = v(&self.port).parse().unwrap_or(5432);
+        c.port = v(&self.port).parse().unwrap_or(c.engine.default_port());
         c.user = v(&self.user);
         c.database = v(&self.database);
         c.path = v(&self.path);
@@ -91,8 +91,8 @@ impl ConnectForm {
         if c.name.is_empty() {
             c.name = match c.engine {
                 Engine::Sqlite => c.database_name(),
-                Engine::Postgres if !c.database.is_empty() => c.database.clone(),
-                Engine::Postgres => c.host.clone(),
+                _ if !c.database.is_empty() => c.database.clone(),
+                _ => c.host.clone(),
             };
         }
         c
@@ -119,7 +119,7 @@ impl ConnectForm {
 
     pub fn submit(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let c = self.read(cx);
-        if c.engine == Engine::Postgres {
+        if c.engine.is_server() {
             let pass = self.password.read(cx).value().to_string();
             if let Err(e) = config::set_password(&c.id, &pass) {
                 self.result = Some((false, e.to_string()));
@@ -128,6 +128,36 @@ impl ConnectForm {
             }
         }
         cx.emit(FormEvent::Saved(c, true));
+    }
+
+    /// Switch engines, moving the port, user and TLS off the old engine's defaults.
+    fn set_engine(&mut self, engine: Engine, window: &mut Window, cx: &mut Context<Self>) {
+        let old = self.config.engine;
+        if old == engine {
+            return;
+        }
+        self.config.engine = engine;
+        if !engine.is_server() {
+            return;
+        }
+        let port = self.port.read(cx).value().trim().to_string();
+        if port.is_empty() || port == "0" || port == old.default_port().to_string() {
+            self.port.update(cx, |s, cx| s.set_value(engine.default_port().to_string(), window, cx));
+        }
+        let os_user = std::env::var("USER").unwrap_or_default();
+        let user = self.user.read(cx).value().trim().to_string();
+        let new_user = match engine {
+            Engine::ClickHouse if user.is_empty() || user == os_user => Some("default".to_string()),
+            Engine::Postgres if user == "default" => Some(os_user),
+            _ => None,
+        };
+        if let Some(u) = new_user {
+            self.user.update(cx, |s, cx| s.set_value(u, window, cx));
+        }
+        // ClickHouse's HTTP interface can't negotiate TLS: it's on or off.
+        if engine == Engine::ClickHouse && self.config.ssl == SslMode::Prefer {
+            self.config.ssl = SslMode::Disable;
+        }
     }
 
     pub fn browse(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -152,15 +182,22 @@ impl ConnectForm {
     }
 }
 
-fn label(c: Palette, s: &str) -> Div {
+pub(super) fn label(c: Palette, s: &str) -> Div {
     div().text_size(px(scaled_ui(11.5))).text_color(rgb(c.muted)).font_weight(FontWeight::MEDIUM).child(s.to_string())
 }
 
-fn field(c: Palette, input: &Entity<InputState>) -> Div {
+pub(super) fn field(c: Palette, input: &Entity<InputState>) -> Div {
     div().h(px(30.)).px(px(6.)).flex().items_center().rounded(px(6.)).border_1().border_color(rgb(c.border)).bg(rgb(c.background)).child(Input::new(input).appearance(false))
 }
 
-fn segmented<T: Copy + PartialEq + 'static>(c: Palette, id: &'static str, options: &[(T, &'static str, Option<u32>)], current: T, cx: &mut Context<ConnectForm>, set: fn(&mut ConnectForm, T)) -> Div {
+fn segmented<T: Copy + PartialEq + 'static>(
+    c: Palette,
+    id: &'static str,
+    options: &[(T, &'static str, Option<u32>)],
+    current: T,
+    cx: &mut Context<ConnectForm>,
+    set: fn(&mut ConnectForm, T, &mut Window, &mut Context<ConnectForm>),
+) -> Div {
     row().h(px(28.)).rounded(px(6.)).border_1().border_color(rgb(c.border)).overflow_hidden().children(options.iter().enumerate().map(|(i, (v, l, color))| {
         let v = *v;
         let on = v == current;
@@ -174,8 +211,8 @@ fn segmented<T: Copy + PartialEq + 'static>(c: Palette, id: &'static str, option
             .when(!on, |s| s.text_color(rgb(c.muted)).hover(|s| s.bg(rgb(c.hover))))
             .when_some(*color, |s, col| s.child(dot(col, 7.)))
             .child(l.to_string())
-            .on_click(cx.listener(move |f, _, _, cx| {
-                set(f, v);
+            .on_click(cx.listener(move |f, _, window, cx| {
+                set(f, v, window, cx);
                 cx.notify();
             }))
     }))
@@ -184,7 +221,12 @@ fn segmented<T: Copy + PartialEq + 'static>(c: Palette, id: &'static str, option
 impl Render for ConnectForm {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let c = palette(cx);
-        let pg = self.config.engine == Engine::Postgres;
+        let server = self.config.engine.is_server();
+        let ssl_options: &[(SslMode, &str, Option<u32>)] = if self.config.engine == Engine::ClickHouse {
+            &[(SslMode::Disable, "Off", None), (SslMode::Require, "On", None), (SslMode::RequireNoVerify, "On, any cert", None)]
+        } else {
+            &[(SslMode::Disable, "Off", None), (SslMode::Prefer, "Prefer", None), (SslMode::Require, "Require", None), (SslMode::RequireNoVerify, "Require, any cert", None)]
+        };
         let (env, _) = env_color(c, self.config.env);
         // Header and footer stay fixed; the fields scroll when the window is too short.
         col()
@@ -210,14 +252,16 @@ impl Render for ConnectForm {
                     .pb(px(14.))
                     .gap(px(12.))
                     .child(row().gap(px(10.)).child(
-                        segmented(c, "engine", &[(Engine::Postgres, "PostgreSQL", None), (Engine::Sqlite, "SQLite", None)], self.config.engine, cx, |f, v| {
-                            f.config.engine = v;
-                            if v == Engine::Postgres && f.config.port == 0 {
-                                f.config.port = 5432;
-                            }
-                        }),
+                        segmented(
+                            c,
+                            "engine",
+                            &[(Engine::Postgres, "PostgreSQL", None), (Engine::ClickHouse, "ClickHouse", None), (Engine::Sqlite, "SQLite", None)],
+                            self.config.engine,
+                            cx,
+                            |f, v, window, cx| f.set_engine(v, window, cx),
+                        ),
                     ))
-                    .when(pg, |s| s.child(col().gap(px(5.)).child(label(c, "URL")).child(field(c, &self.url))))
+                    .when(server, |s| s.child(col().gap(px(5.)).child(label(c, "URL")).child(field(c, &self.url))))
                     .child(
                         row()
                             .gap(px(10.))
@@ -229,10 +273,10 @@ impl Render for ConnectForm {
                                 &[(Env::Development, "Dev", Some(c.green)), (Env::Staging, "Staging", Some(c.amber)), (Env::Production, "Prod", Some(c.red))],
                                 self.config.env,
                                 cx,
-                                |f, v| f.config.env = v,
+                                |f, v, _, _| f.config.env = v,
                             ))),
                     )
-                    .when(pg, |s| {
+                    .when(server, |s| {
                         s.child(
                             row()
                                 .gap(px(10.))
@@ -249,13 +293,23 @@ impl Render for ConnectForm {
                         .child(col().gap(px(5.)).child(label(c, "SSL")).child(segmented(
                             c,
                             "ssl",
-                            &[(SslMode::Disable, "Off", None), (SslMode::Prefer, "Prefer", None), (SslMode::Require, "Require", None), (SslMode::RequireNoVerify, "Require, any cert", None)],
+                            ssl_options,
                             self.config.ssl,
                             cx,
-                            |f, v| f.config.ssl = v,
+                            |f, v, window, cx| {
+                                f.config.ssl = v;
+                                // Follow the HTTP interface's usual ports, 8123 plain and 8443 with TLS.
+                                if f.config.engine == Engine::ClickHouse {
+                                    let port = f.port.read(cx).value().trim().to_string();
+                                    let want = if v == SslMode::Disable { (Some("8443"), "8123") } else { (Some("8123"), "8443") };
+                                    if want.0 == Some(port.as_str()) || port.is_empty() {
+                                        f.port.update(cx, |s, cx| s.set_value(want.1.to_string(), window, cx));
+                                    }
+                                }
+                            },
                         )))
                     })
-                    .when(!pg, |s| {
+                    .when(!server, |s| {
                         s.child(
                             col().gap(px(5.)).child(label(c, "Database file")).child(
                                 row()

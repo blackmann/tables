@@ -7,6 +7,7 @@ The design it implements is `mockups/index.html`.
 cargo run --release                                   # pick or add a connection
 cargo run --release -- path/to/file.sqlite            # open a SQLite file directly
 cargo run --release -- postgres://user:pass@host/db   # or a Postgres URL
+cargo run --release -- clickhouse://default@host/db    # or ClickHouse (HTTP; ?secure=true for 8443)
 ```
 
 Try it on demo data: `scripts/seed-demo.py demo.sqlite`, then `cargo run -- demo.sqlite`.
@@ -22,7 +23,8 @@ to `/Applications`; `TABLES_INSTALL_DIR` overrides the location).
 
 ## What's here
 
-- **Connections**: PostgreSQL (TLS: off / prefer / require / require-any-cert) and SQLite.
+- **Connections**: PostgreSQL (TLS: off / prefer / require / require-any-cert), ClickHouse
+  (over its HTTP interface, 8123 or 8443 with TLS; its databases show as schemas) and SQLite.
   Each is tagged development, staging or production. Production shows as a red stripe and
   chip, and every write asks first: grid commits, and SQL that isn't read-only.
   Passwords live in the macOS Keychain; everything else lives in
@@ -50,7 +52,7 @@ to `/Applications`; `TABLES_INSTALL_DIR` overrides the location).
   - Tree-sitter highlighting, with completion that reads aliases (`o.` lists the columns of
     `orders o`).
   - ⌘↵ runs the selection or the statement under the cursor, ⌘⇧↵ runs everything, and
-    ⌃C cancels (Postgres).
+    ⌃C cancels (Postgres, ClickHouse).
   - One result tab per result set, a message log, and Explain (⌘E). Explain runs
     EXPLAIN ANALYZE for reads, shows self time per node, and suggests an index for the
     worst sequential scan.
@@ -59,18 +61,32 @@ to `/Applications`; `TABLES_INSTALL_DIR` overrides the location).
   enums, a JSON editor, and FK links. Edits go into the same pending changes as the grid.
   Below the fields, "Referenced by" opens related rows.
 - **Palette** (⌘K): tables, saved queries, commands, connections.
+- **Import from TablePlus** (File menu): an exported `.tableplusconnection` file (asks for
+  the export password, and brings passwords into the Keychain), or TablePlus's own
+  `~/Library/Application Support/com.tinyapp.TablePlus/Data/Connections.plist` (no passwords).
+  Connections already saved are left alone; SSH tunnels and unsupported engines are skipped
+  and listed.
 
 ## Layout
 
 | Path | What it does |
 | --- | --- |
-| `src/db/` | Engine-neutral types, SQL generation, and the drivers (`postgres.rs`, `sqlite.rs`). Drivers block and run on background threads behind a mutex. |
+| `src/db/` | Engine-neutral types, SQL generation, and the drivers (`postgres.rs`, `clickhouse.rs`, `sqlite.rs`). Drivers block and run on background threads behind a mutex. |
 | `src/session.rs` | An open connection plus its schema cache (tables, columns, details) |
 | `src/grid.rs` | The data grid and its pending-change tracking |
 | `src/table_view.rs`, `src/sql_view.rs` | The two kinds of tab |
 | `src/completion.rs` | SQL completion for gpui-component's code editor |
 | `src/workspace/` | Window chrome, sidebar, detail panel, connection form, overlays |
 | `src/theme.rs`, `src/menu.rs` | Shared with `../chat` |
+
+## ClickHouse notes
+
+ClickHouse has no transactions, so a grid commit runs its statements in order and a failure
+keeps the ones before it (Review SQL says so). Edits become mutations (`ALTER TABLE … UPDATE`)
+and lightweight `DELETE`s, waited for with `mutations_sync`. Its primary key is the sorting
+key and isn't unique, so an edit changes every row sharing that key. Users who may not change
+settings (`readonly = 1`) still work: reads ask for their format in the query instead.
+Strings with backslash-escaped quotes (`'it\'s'`) can confuse the script splitter; use `''`.
 
 ## Not yet
 

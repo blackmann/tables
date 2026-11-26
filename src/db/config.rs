@@ -1,7 +1,7 @@
 //! Saved connections and per-connection app state, kept as JSON in Application
 //! Support. Passwords never touch the file: they live in the login keychain.
 use super::{Driver, Engine};
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -80,8 +80,8 @@ impl ConnectionConfig {
             engine,
             env: Env::Development,
             host: "localhost".into(),
-            port: 5432,
-            user: std::env::var("USER").unwrap_or_default(),
+            port: engine.default_port(),
+            user: if engine == Engine::ClickHouse { "default".into() } else { std::env::var("USER").unwrap_or_default() },
             database: String::new(),
             path: String::new(),
             ssl: SslMode::Prefer,
@@ -91,13 +91,13 @@ impl ConnectionConfig {
     pub fn address(&self) -> String {
         match self.engine {
             Engine::Sqlite => self.path.replace(&std::env::var("HOME").unwrap_or_default(), "~"),
-            Engine::Postgres => format!("{}:{}", self.host, self.port),
+            Engine::Postgres | Engine::ClickHouse => format!("{}:{}", self.host, self.port),
         }
     }
     pub fn database_name(&self) -> String {
         match self.engine {
             Engine::Sqlite => std::path::Path::new(&self.path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
-            Engine::Postgres => self.database.clone(),
+            Engine::Postgres | Engine::ClickHouse => self.database.clone(),
         }
     }
     /// Connect, returning the driver and, where the engine has one, a way to
@@ -107,6 +107,10 @@ impl ConnectionConfig {
             Engine::Sqlite => Ok((Box::new(super::sqlite::Sqlite::open(&self.path)?), None)),
             Engine::Postgres => {
                 let (d, c) = super::postgres::Postgres::connect(self, password)?.into_parts();
+                Ok((d, Some(c)))
+            }
+            Engine::ClickHouse => {
+                let (d, c) = super::clickhouse::ClickHouse::connect(self, password)?.into_parts();
                 Ok((d, Some(c)))
             }
         }
@@ -210,7 +214,8 @@ pub fn forget_password(id: &str) {
     let _ = security_framework::passwords::delete_generic_password(SERVICE, id);
 }
 
-/// Read a `postgres://user:pass@host:port/db?sslmode=…` URL into a config.
+/// Read a `postgres://user:pass@host:port/db?sslmode=…` URL into a config, or a
+/// `clickhouse://…?secure=true` one (also `https://host:8443/…`, the HTTP interface's own).
 pub fn from_url(url: &str) -> Result<(ConnectionConfig, Option<String>)> {
     let url = url.trim();
     if let Some(path) = url.strip_prefix("sqlite://").or_else(|| url.strip_prefix("file:")) {
@@ -219,12 +224,25 @@ pub fn from_url(url: &str) -> Result<(ConnectionConfig, Option<String>)> {
         c.name = c.database_name();
         return Ok((c, None));
     }
-    let rest = url.strip_prefix("postgres://").or_else(|| url.strip_prefix("postgresql://")).context("Expected a postgres:// or sqlite:// URL")?;
-    let mut c = ConnectionConfig::new(Engine::Postgres);
+    let (engine, rest, secure) = if let Some(r) = url.strip_prefix("postgres://").or_else(|| url.strip_prefix("postgresql://")) {
+        (Engine::Postgres, r, false)
+    } else if let Some(r) = url.strip_prefix("clickhouse://").or_else(|| url.strip_prefix("ch://")) {
+        (Engine::ClickHouse, r, false)
+    } else if let Some(r) = url.strip_prefix("https://") {
+        (Engine::ClickHouse, r, true)
+    } else if let Some(r) = url.strip_prefix("http://") {
+        (Engine::ClickHouse, r, false)
+    } else {
+        anyhow::bail!("Expected a postgres://, clickhouse:// or sqlite:// URL")
+    };
+    let mut c = ConnectionConfig::new(engine);
     let (rest, query) = rest.split_once('?').unwrap_or((rest, ""));
+    let secure = secure || query.split('&').any(|kv| matches!(kv, "secure=true" | "secure=1" | "ssl=true"));
+    let default_port = if secure { 8443 } else { engine.default_port() };
     let (auth, hostpart) = rest.rsplit_once('@').map(|(a, h)| (Some(a), h)).unwrap_or((None, rest));
     let (hostport, db) = hostpart.split_once('/').unwrap_or((hostpart, ""));
-    let (host, port) = hostport.rsplit_once(':').map(|(h, p)| (h, p.parse().unwrap_or(5432))).unwrap_or((hostport, 5432));
+    let db = db.trim_end_matches('/');
+    let (host, port) = hostport.rsplit_once(':').map(|(h, p)| (h, p.parse().unwrap_or(default_port))).unwrap_or((hostport, default_port));
     c.host = host.to_string();
     c.port = port;
     c.database = db.to_string();
@@ -242,6 +260,9 @@ pub fn from_url(url: &str) -> Result<(ConnectionConfig, Option<String>)> {
                 _ => SslMode::Prefer,
             };
         }
+    }
+    if engine == Engine::ClickHouse {
+        c.ssl = if secure { SslMode::Require } else { SslMode::Disable };
     }
     c.name = if c.database.is_empty() { c.host.clone() } else { c.database.clone() };
     Ok((c, pass))
@@ -274,5 +295,9 @@ mod tests {
         let (c, p) = from_url("postgres://me:p%40ss@db.example.com:6543/app?sslmode=require").unwrap();
         assert_eq!((c.user.as_str(), c.host.as_str(), c.port, c.database.as_str(), c.ssl), ("me", "db.example.com", 6543, "app", SslMode::Require));
         assert_eq!(p.as_deref(), Some("p@ss"));
+        let (c, _) = from_url("clickhouse://default:x@ch.example.com/logs?secure=true").unwrap();
+        assert_eq!((c.engine, c.port, c.database.as_str(), c.ssl), (Engine::ClickHouse, 8443, "logs", SslMode::Require));
+        let (c, _) = from_url("http://localhost:8123").unwrap();
+        assert_eq!((c.engine, c.port, c.ssl, c.user.as_str()), (Engine::ClickHouse, 8123, SslMode::Disable, "default"));
     }
 }

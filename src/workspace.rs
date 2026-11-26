@@ -3,6 +3,7 @@
 mod chrome;
 mod connect;
 mod detail;
+pub mod import;
 mod overlays;
 mod preferences;
 mod sidebar;
@@ -17,6 +18,7 @@ use crate::table_view::{Mode, TableView};
 use crate::theme::palette;
 use crate::ui::*;
 pub use connect::{ConnectForm, FormEvent};
+pub use import::{ImportEvent, ImportForm};
 use detail::DetailState;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
@@ -29,7 +31,7 @@ use std::time::Duration;
 actions!(
     workspace,
     [
-        NewQuery, CloseTab, ToggleSidebar, ToggleDetail, OpenPalette, Save, Reload, FocusFilter, NextTab, PrevTab, NewConnection, Disconnect, OpenSettings,
+        NewQuery, CloseTab, ToggleSidebar, ToggleDetail, OpenPalette, Save, Reload, FocusFilter, NextTab, PrevTab, NewConnection, ImportTablePlus, Disconnect, OpenSettings,
         Quit, ConfirmModal, CancelModal, Tab1, Tab2, Tab3, Tab4, Tab5, Tab6, Tab7, Tab8, Tab9
     ]
 );
@@ -78,6 +80,7 @@ pub enum Modal {
     /// Statements that write to production, waiting for a yes.
     ConfirmRun { tab: Entity<SqlView>, sql: String, view: Entity<InputState> },
     Connection(Entity<ConnectForm>),
+    Import(Entity<ImportForm>),
     Message { title: String, body: String },
     /// Closing a tab with uncommitted edits.
     CloseDirty(usize),
@@ -187,7 +190,7 @@ impl Workspace {
     pub fn connect(&mut self, config: ConnectionConfig, _window: &mut Window, cx: &mut Context<Self>) {
         let id = config.id.clone();
         self.toast(format!("Connecting to {}…", config.name), cx);
-        let password = if config.engine == Engine::Postgres { config::password(&config.id) } else { None };
+        let password = if config.engine.is_server() { config::password(&config.id) } else { None };
         let c2 = config.clone();
         let task = cx.background_spawn(async move { session::open(c2, password) });
         let t = cx.spawn_in(_window, async move |this, cx| {
@@ -458,7 +461,12 @@ impl Workspace {
         if stmts.is_empty() {
             return;
         }
-        let text = format!("BEGIN;\n\n{}\n\nCOMMIT;", stmts.join("\n\n"));
+        let transactional = self.session.as_ref().is_none_or(|s| s.read(cx).engine().transactional());
+        let text = if transactional {
+            format!("BEGIN;\n\n{}\n\nCOMMIT;", stmts.join("\n\n"))
+        } else {
+            format!("-- No transactions here: statements run in order, and a failure keeps the ones before it.\n\n{}", stmts.join("\n\n"))
+        };
         let sql = read_only_sql(&text, window, cx);
         self.modal = Some(Modal::Review { tab: t, sql, commit });
         self.modal_focus.focus(window);
@@ -589,6 +597,11 @@ impl Workspace {
             }
             Some(Modal::Connection(form)) => {
                 self.modal = Some(Modal::Connection(form.clone()));
+                form.update(cx, |f, cx| f.submit(window, cx));
+                return;
+            }
+            Some(Modal::Import(form)) => {
+                self.modal = Some(Modal::Import(form.clone()));
                 form.update(cx, |f, cx| f.submit(window, cx));
                 return;
             }
@@ -768,6 +781,7 @@ impl Render for Workspace {
                 }
             }))
             .on_action(cx.listener(|w, _: &NewConnection, window, cx| w.edit_connection(None, window, cx)))
+            .on_action(cx.listener(|w, _: &ImportTablePlus, window, cx| w.import_tableplus(window, cx)))
             .on_action(cx.listener(|w, _: &Disconnect, window, cx| w.disconnect(window, cx)))
             .on_action(cx.listener(|w, _: &OpenSettings, window, cx| w.open_settings(window, cx)))
             .on_action(cx.listener(|w, _: &Tab1, _, cx| w.select_tab(0, cx)))

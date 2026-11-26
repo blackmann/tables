@@ -14,3 +14,5 @@ for s in 16 32 128 256 512; do
 done
 iconutil -c icns "$set_dir" -o assets/AppIcon.icns
 printf 'Wrote assets/AppIcon.icns\n'
+sips -z 256 256 assets/icon-source.png --out assets/icon-256.png >/dev/null
+printf 'Wrote assets/icon-256.png\n'

@@ -8,7 +8,7 @@ use crate::menu::{self, Menu};
 use crate::session;
 use crate::theme::{Palette, palette, scaled_ui};
 use crate::ui::*;
-use crate::workspace::{CancelModal, ConfirmModal, ConnectForm, FormEvent, NewConnection};
+use crate::workspace::{CancelModal, ConfirmModal, ConnectForm, FormEvent, ImportEvent, ImportForm, ImportTablePlus, NewConnection};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::input::{Input, InputEvent, InputState};
@@ -24,8 +24,18 @@ pub fn bind_keys(cx: &mut App) {
     ]);
 }
 
+/// The app icon's artwork: square and full-bleed, so clip it to a rounded rect.
+fn app_icon() -> std::sync::Arc<Image> {
+    static ICON: std::sync::OnceLock<std::sync::Arc<Image>> = std::sync::OnceLock::new();
+    ICON.get_or_init(|| std::sync::Arc::new(Image::from_bytes(ImageFormat::Png, include_bytes!("../assets/icon-256.png").to_vec())))
+        .clone()
+}
+
 const WIDTH: f32 = 760.;
 const HEIGHT: f32 = 480.;
+/// The window grows to this while the connection form is open, so the
+/// Postgres fields fit without scrolling.
+const FORM_HEIGHT: f32 = 680.;
 /// How many recently used connections lead the list.
 const RECENT: usize = 3;
 
@@ -77,6 +87,7 @@ pub struct Welcome {
     connecting: Option<(String, Task<()>)>,
     error: Option<(String, String)>,
     form: Option<Entity<ConnectForm>>,
+    import: Option<Entity<ImportForm>>,
     modal_focus: FocusHandle,
     popup: Option<(Entity<Menu>, Point<Pixels>)>,
     scroll: ScrollHandle,
@@ -101,6 +112,7 @@ impl Welcome {
             connecting: None,
             error: None,
             form: None,
+            import: None,
             modal_focus: cx.focus_handle(),
             popup: None,
             scroll: ScrollHandle::new(),
@@ -150,7 +162,7 @@ impl Welcome {
     }
 
     fn key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if self.form.is_some() || self.popup.is_some() {
+        if self.form.is_some() || self.import.is_some() || self.popup.is_some() {
             return;
         }
         let k = &e.keystroke;
@@ -181,7 +193,7 @@ impl Welcome {
         }
         self.error = None;
         let id = config.id.clone();
-        let password = if config.engine == Engine::Postgres { config::password(&config.id) } else { None };
+        let password = if config.engine.is_server() { config::password(&config.id) } else { None };
         let c2 = config.clone();
         let task = cx.background_spawn(async move { session::open(c2, password) });
         let t = cx.spawn_in(window, async move |this, cx| {
@@ -272,12 +284,32 @@ impl Welcome {
             cx.notify();
         }));
         self.form = Some(form);
+        window.resize(size(px(WIDTH), px(FORM_HEIGHT)));
         self.modal_focus.focus(window);
         cx.notify();
     }
 
+    fn import_tableplus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let this = cx.entity().downgrade();
+        crate::workspace::import::pick(window, cx, move |path, window, cx| {
+            let _ = this.update(cx, |w, cx| {
+                // The sheet takes focus; its password field, if it has one, then takes it from there.
+                w.modal_focus.focus(window);
+                let form = cx.new(|cx| ImportForm::new(path, window, cx));
+                w._subs.push(cx.subscribe_in(&form, window, |w, _, ImportEvent::Close, window, cx| {
+                    w.store = Store::load();
+                    w.close_form(window, cx);
+                }));
+                w.import = Some(form);
+                cx.notify();
+            });
+        });
+    }
+
     fn close_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.form = None;
+        self.import = None;
+        window.resize(size(px(WIDTH), px(HEIGHT)));
         self.filter.update(cx, |s, cx| s.focus(window, cx));
         cx.notify();
     }
@@ -365,16 +397,13 @@ impl Welcome {
                     .justify_center()
                     .gap(px(4.))
                     .child(
+                        // Same corner ratio as the Dock icon (185/824 of the body).
                         div()
                             .size(px(76.))
                             .mb(px(12.))
-                            .rounded(px(18.))
-                            .bg(linear_gradient(155., linear_color_stop(hx(0x4b8fe0), 0.), linear_color_stop(hx(0x2c5fa8), 1.)))
+                            .rounded(px(17.))
                             .shadow_lg()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(icon(Glyph::Table, 42., 0xffffff)),
+                            .child(img(app_icon()).size_full().rounded(px(17.))),
                     )
                     .child(div().text_size(px(scaled_ui(22.))).font_weight(FontWeight::BOLD).child("Tables"))
                     .child(text(12.).text_color(rgb(c.quiet)).child(concat!("Version ", env!("CARGO_PKG_VERSION"))))
@@ -625,8 +654,8 @@ fn group_of(rows: &[Row], i: usize, searching: bool) -> &'static str {
 fn describe(c: &ConnectionConfig) -> String {
     match c.engine {
         Engine::Sqlite => c.address(),
-        Engine::Postgres if c.database.is_empty() => c.address(),
-        Engine::Postgres => format!("{} · {}", c.address(), c.database),
+        _ if c.database.is_empty() => c.address(),
+        _ => format!("{} · {}", c.address(), c.database),
     }
 }
 
@@ -671,6 +700,7 @@ impl Render for Welcome {
             .capture_key_down(cx.listener(Self::key))
             .on_action(cx.listener(|w, _: &NewConnection, window, cx| w.edit(None, window, cx)))
             .on_action(cx.listener(|w, _: &OpenFile, window, cx| w.open_file(window, cx)))
+            .on_action(cx.listener(|w, _: &ImportTablePlus, window, cx| w.import_tableplus(window, cx)))
             .on_action(cx.listener(|w, _: &EditSelected, window, cx| {
                 if w.form.is_none() && let Some(c) = w.selected_config(cx) {
                     w.edit(Some(c), window, cx);
@@ -698,7 +728,23 @@ impl Render for Welcome {
                             }
                         }))
                         .on_action(cx.listener(|w, _: &CancelModal, window, cx| w.close_form(window, cx)))
-                        .child(modal(c, 560., form)),
+                        .child(modal_fill(c, 560., form)),
+                )
+            })
+            .when_some(self.import.clone(), |s, form| {
+                s.child(
+                    div()
+                        .key_context("Modal")
+                        .track_focus(&self.modal_focus)
+                        .absolute()
+                        .inset_0()
+                        .on_action(cx.listener(|w, _: &ConfirmModal, window, cx| {
+                            if let Some(f) = w.import.clone() {
+                                f.update(cx, |f, cx| f.submit(window, cx));
+                            }
+                        }))
+                        .on_action(cx.listener(|w, _: &CancelModal, window, cx| w.close_form(window, cx)))
+                        .child(modal_fill(c, 480., form)),
                 )
             })
             .when_some(self.popup.clone(), |s, (m, at)| s.child(anchored().anchor(Corner::TopLeft).position(at).snap_to_window_with_margin(px(8.)).child(m)))

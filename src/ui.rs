@@ -175,21 +175,30 @@ pub fn fmt_ms(d: std::time::Duration) -> String {
 /// Drawn in place, last, rather than deferred: text fields open their own
 /// deferred menus on right-click, and GPUI can't defer inside a deferral.
 pub fn modal(c: Palette, width: f32, content: impl IntoElement) -> impl IntoElement {
+    modal_card(c, width, false, content)
+}
+
+/// Like [`modal`], but centred and allowed the whole window height, for
+/// small windows where the usual top offset would squeeze the card.
+pub fn modal_fill(c: Palette, width: f32, content: impl IntoElement) -> impl IntoElement {
+    modal_card(c, width, true, content)
+}
+
+fn modal_card(c: Palette, width: f32, fill: bool, content: impl IntoElement) -> impl IntoElement {
     div()
             .id("modal-scrim")
             .absolute()
             .inset_0()
             .bg(rgba(c.scrim))
             .flex()
-            .items_start()
             .justify_center()
-            .pt(relative(0.12))
+            .map(|s| if fill { s.items_center().p(px(16.)) } else { s.items_start().pt(relative(0.12)) })
             .occlude()
             .child(
                 div()
                     .id("modal-card")
                     .w(px(width))
-                    .max_h(relative(0.8))
+                    .map(|s| if fill { s.max_h_full() } else { s.max_h(relative(0.8)) })
                     .flex()
                     .flex_col()
                     .bg(rgb(c.popover))

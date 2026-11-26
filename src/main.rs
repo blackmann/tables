@@ -44,6 +44,8 @@ fn main() {
                     MenuItem::action("New Query", NewQuery),
                     MenuItem::action("Save", Save),
                     MenuItem::separator(),
+                    MenuItem::action("Import from TablePlus…", ImportTablePlus),
+                    MenuItem::separator(),
                     MenuItem::action("Close Tab", CloseTab),
                     MenuItem::action("Disconnect", Disconnect),
                 ],

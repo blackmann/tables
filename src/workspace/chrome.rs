@@ -39,9 +39,10 @@ impl Workspace {
                             })),
                     )
                     .child(div().text_color(rgb(c.quiet)).child("/"))
-                    .child(div().text_color(rgb(c.muted)).child(cfg.database_name()))
-                    .when(session.engine() == Engine::Postgres, |s| {
-                        s.child(div().text_color(rgb(c.quiet)).child("/")).child(
+                    // ClickHouse's databases are its schemas: the picker stands in for the name.
+                    .when(session.engine() != Engine::ClickHouse, |s| s.child(div().text_color(rgb(c.muted)).child(cfg.database_name())))
+                    .when(session.engine().has_schemas(), |s| {
+                        s.when(session.engine() != Engine::ClickHouse, |s| s.child(div().text_color(rgb(c.quiet)).child("/"))).child(
                             row()
                                 .id("schema")
                                 .relative()
@@ -57,7 +58,8 @@ impl Workspace {
                                 .on_mouse_down(MouseButton::Left, cx.listener(|w, e: &MouseDownEvent, window, cx| {
                                     let build = w.schema_menu(cx);
                                     let at = below(&w.schema_button, e.position);
-                                    w.open_menu(build, at, 220., Some("Schemas"), window, cx);
+                                    let title = if w.session.as_ref().is_some_and(|s| s.read(cx).engine() == Engine::ClickHouse) { "Databases" } else { "Schemas" };
+                                    w.open_menu(build, at, 220., Some(title), window, cx);
                                 })),
                         )
                     })

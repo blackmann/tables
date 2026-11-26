@@ -4,9 +4,11 @@
 //! only ever sees the plain data defined here. Writes from the grid are turned
 //! into literal SQL by [`Change::to_sql`] and that same text is what runs, so
 //! the review dialog shows exactly what will be executed.
+pub mod clickhouse;
 pub mod config;
 pub mod postgres;
 pub mod sqlite;
+pub mod tableplus;
 
 use anyhow::Result;
 use std::fmt::Write as _;
@@ -16,6 +18,7 @@ use std::time::Duration;
 pub enum Engine {
     Postgres,
     Sqlite,
+    ClickHouse,
 }
 
 impl Engine {
@@ -23,6 +26,33 @@ impl Engine {
         match self {
             Engine::Postgres => "PostgreSQL",
             Engine::Sqlite => "SQLite",
+            Engine::ClickHouse => "ClickHouse",
+        }
+    }
+    /// Whether it's a server reached over the network, with a password.
+    pub fn is_server(self) -> bool {
+        !matches!(self, Engine::Sqlite)
+    }
+    /// Whether the sidebar has schemas (databases, for ClickHouse) to switch between.
+    pub fn has_schemas(self) -> bool {
+        self.is_server()
+    }
+    pub fn default_port(self) -> u16 {
+        match self {
+            Engine::Postgres => 5432,
+            Engine::ClickHouse => 8123,
+            Engine::Sqlite => 0,
+        }
+    }
+    /// Whether grid edits commit in one transaction.
+    pub fn transactional(self) -> bool {
+        !matches!(self, Engine::ClickHouse)
+    }
+    /// A string literal. ClickHouse reads backslashes as escapes, so they're doubled there.
+    pub fn text_literal(self, s: &str) -> String {
+        match self {
+            Engine::ClickHouse => quote_text(&s.replace('\\', "\\\\")),
+            _ => quote_text(s),
         }
     }
     /// The mark on the engine's badge.
@@ -30,6 +60,7 @@ impl Engine {
         match self {
             Engine::Postgres => crate::icons::Glyph::Elephant,
             Engine::Sqlite => crate::icons::Glyph::Feather,
+            Engine::ClickHouse => crate::icons::Glyph::Bars,
         }
     }
     /// The badge's gradient, top to bottom.
@@ -37,6 +68,7 @@ impl Engine {
         match self {
             Engine::Postgres => (0x6aa5ff, 0x3a6ee8),
             Engine::Sqlite => (0x4fd6ff, 0x109ee0),
+            Engine::ClickHouse => (0xffc53d, 0xe8920c),
         }
     }
     pub fn quote(self, ident: &str) -> String {
@@ -93,10 +125,10 @@ impl Value {
             other => other.display(),
         }
     }
-    /// A SQL literal. Everything but NULL, DEFAULT and booleans is quoted: both
+    /// A SQL literal. Everything but NULL, DEFAULT and booleans is quoted: the
     /// engines coerce a quoted literal to the column's type, which keeps this
     /// independent of what the column holds.
-    pub fn literal(&self) -> String {
+    pub fn literal(&self, engine: Engine) -> String {
         match self {
             Value::Null => "NULL".into(),
             Value::Default => "DEFAULT".into(),
@@ -104,13 +136,17 @@ impl Value {
             Value::Int(i) => i.to_string(),
             Value::Float(f) => f.to_string(),
             Value::Bytes(b) => {
-                let mut s = String::from("'\\x");
+                let mut hex = String::new();
                 for byte in b {
-                    let _ = write!(s, "{byte:02x}");
+                    let _ = write!(hex, "{byte:02x}");
                 }
-                s + "'"
+                match engine {
+                    Engine::ClickHouse => format!("unhex('{hex}')"),
+                    Engine::Sqlite => format!("X'{hex}'"),
+                    Engine::Postgres => format!("'\\x{hex}'"),
+                }
             }
-            other => quote_text(&other.display()),
+            other => engine.text_literal(&other.display()),
         }
     }
     /// Read what someone typed into an editor for a column of `kind`.
@@ -176,9 +212,10 @@ pub enum Kind {
 
 impl Kind {
     pub fn from_type(t: &str) -> Kind {
-        let t = t.to_ascii_lowercase();
+        // ClickHouse wraps types: Nullable(String), LowCardinality(String).
+        let t = clickhouse::base_type(t).to_ascii_lowercase();
         let base = t.split('(').next().unwrap_or("").trim();
-        if t.ends_with("[]") || t.starts_with('_') {
+        if t.ends_with("[]") || t.starts_with('_') || base == "array" {
             return Kind::Array;
         }
         match base {
@@ -190,7 +227,10 @@ impl Kind {
             "uuid" => Kind::Uuid,
             "bytea" | "blob" => Kind::Bytes,
             "text" | "varchar" | "character varying" | "char" | "character" | "bpchar" | "name" | "citext" | "string" | "clob" => Kind::Text,
-            _ if base.starts_with("timestamp") || base == "date" || base.starts_with("time") || base == "datetime" || base == "interval" => Kind::Time,
+            "fixedstring" => Kind::Text,
+            _ if base.starts_with("decimal") => Kind::Number,
+            _ if base.starts_with("float") => Kind::Float,
+            _ if base.starts_with("timestamp") || base.starts_with("date") || base.starts_with("time") || base == "datetime" || base == "interval" => Kind::Time,
             _ if base.starts_with("varchar") || base.starts_with("nvarchar") || base.contains("char") => Kind::Text,
             _ if base.contains("int") => Kind::Int,
             _ => Kind::Other,
@@ -398,7 +438,7 @@ impl Change {
         let q = |s: &str| engine.quote(s);
         let cond = |key: &[(String, Value)]| {
             key.iter()
-                .map(|(c, v)| if v.is_null() { format!("{} IS NULL", q(c)) } else { format!("{} = {}", q(c), v.literal()) })
+                .map(|(c, v)| if v.is_null() { format!("{} IS NULL", q(c)) } else { format!("{} = {}", q(c), v.literal(engine)) })
                 .collect::<Vec<_>>()
                 .join(" AND ")
         };
@@ -406,17 +446,27 @@ impl Change {
             Change::Insert { values } => {
                 let given: Vec<_> = values.iter().filter(|(_, v)| *v != Value::Default).collect();
                 if given.is_empty() {
-                    return format!("INSERT INTO {table} DEFAULT VALUES;");
+                    // ClickHouse has no DEFAULT VALUES; an empty JSON row means the same.
+                    return match engine {
+                        Engine::ClickHouse => format!("INSERT INTO {table} FORMAT JSONEachRow {{}}"),
+                        _ => format!("INSERT INTO {table} DEFAULT VALUES;"),
+                    };
                 }
                 format!(
                     "INSERT INTO {table} ({})\nVALUES ({});",
                     given.iter().map(|(c, _)| q(c)).collect::<Vec<_>>().join(", "),
-                    given.iter().map(|(_, v)| v.literal()).collect::<Vec<_>>().join(", ")
+                    given.iter().map(|(_, v)| v.literal(engine)).collect::<Vec<_>>().join(", ")
                 )
             }
+            // ClickHouse changes rows with mutations, which rewrite the parts holding them.
+            Change::Update { key, set } if engine == Engine::ClickHouse => format!(
+                "ALTER TABLE {table}\nUPDATE {}\nWHERE {};",
+                set.iter().map(|(c, v)| format!("{} = {}", q(c), v.literal(engine))).collect::<Vec<_>>().join(",\n    "),
+                cond(key)
+            ),
             Change::Update { key, set } => format!(
                 "UPDATE {table}\nSET {}\nWHERE {};",
-                set.iter().map(|(c, v)| format!("{} = {}", q(c), v.literal())).collect::<Vec<_>>().join(",\n    "),
+                set.iter().map(|(c, v)| format!("{} = {}", q(c), v.literal(engine))).collect::<Vec<_>>().join(",\n    "),
                 cond(key)
             ),
             Change::Delete { key } => format!("DELETE FROM {table} WHERE {};", cond(key)),
@@ -438,7 +488,9 @@ fn condition(engine: Engine, column: &str, op: Op, value: &str) -> String {
     let text = match engine {
         Engine::Postgres => format!("{c}::text"),
         Engine::Sqlite => format!("CAST({c} AS TEXT)"),
+        Engine::ClickHouse => format!("toString({c})"),
     };
+    let quote_text = |s: &str| engine.text_literal(s);
     let v = quote_text(value);
     let list = || value.split(',').map(|x| quote_text(x.trim())).collect::<Vec<_>>().join(", ");
     let range = || {
@@ -454,6 +506,7 @@ fn condition(engine: Engine, column: &str, op: Op, value: &str) -> String {
     let (ci_like, cs_contains, cs_not) = match engine {
         Engine::Postgres => ("ILIKE", format!("{text} LIKE {pattern}"), format!("{text} NOT LIKE {pattern}")),
         Engine::Sqlite => ("LIKE", format!("instr({text}, {v}) > 0"), format!("instr({text}, {v}) = 0")),
+        Engine::ClickHouse => ("ILIKE", format!("position({text}, {v}) > 0"), format!("position({text}, {v}) = 0")),
     };
     match op {
         Op::Eq => format!("{c} = {v}"),
@@ -812,6 +865,19 @@ mod tests {
         let any = vec![Filter { target: Target::AnyColumn, op: Op::Eq, value: "7".into() }, Filter { target: Target::Raw, op: Op::Eq, value: "a > 1".into() }];
         assert_eq!(where_clause(Engine::Sqlite, &any, &["a".into(), "b".into()]), "WHERE (\"a\" = '7' OR \"b\" = '7') AND (a > 1)");
         assert_eq!(where_clause(Engine::Sqlite, &[Filter::column("n", Op::Between, "1 and 5")], &[]), "WHERE \"n\" BETWEEN '1' AND '5'");
+        assert_eq!(where_clause(Engine::ClickHouse, &[Filter::column("p", Op::Contains, "a\\b")], &[]), "WHERE position(toString(\"p\"), 'a\\\\b') > 0");
+    }
+
+    #[test]
+    fn clickhouse_changes() {
+        let t = "\"default\".\"events\"";
+        let u = Change::Update { key: vec![("id".into(), Value::Int(4))], set: vec![("tag".into(), Value::Text("it's".into()))] };
+        assert_eq!(u.to_sql(Engine::ClickHouse, t), "ALTER TABLE \"default\".\"events\"\nUPDATE \"tag\" = 'it''s'\nWHERE \"id\" = 4;");
+        let d = Change::Delete { key: vec![("id".into(), Value::Int(4))] };
+        assert_eq!(d.to_sql(Engine::ClickHouse, t), "DELETE FROM \"default\".\"events\" WHERE \"id\" = 4;");
+        let i = Change::Insert { values: vec![("id".into(), Value::Default)] };
+        assert_eq!(i.to_sql(Engine::ClickHouse, t), "INSERT INTO \"default\".\"events\" FORMAT JSONEachRow {}");
+        assert_eq!(Value::Bytes(vec![0xab]).literal(Engine::ClickHouse), "unhex('ab')");
     }
 
     #[test]
@@ -821,5 +887,11 @@ mod tests {
         assert_eq!(Kind::from_type("numeric(10,2)"), Kind::Number);
         assert_eq!(Kind::from_type("_text"), Kind::Array);
         assert_eq!(Kind::from_type("INTEGER"), Kind::Int);
+        assert_eq!(Kind::from_type("Nullable(UInt64)"), Kind::Int);
+        assert_eq!(Kind::from_type("LowCardinality(String)"), Kind::Text);
+        assert_eq!(Kind::from_type("DateTime64(3, 'UTC')"), Kind::Time);
+        assert_eq!(Kind::from_type("Decimal(18, 4)"), Kind::Number);
+        assert_eq!(Kind::from_type("Float64"), Kind::Float);
+        assert_eq!(Kind::from_type("Array(String)"), Kind::Array);
     }
 }
