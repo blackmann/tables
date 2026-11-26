@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tables — welcome window mockup</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+/* Same palette as mockups/index.html (lifted from ../chat/src/theme.rs). */
+:root {
+  color-scheme: dark;
+  --bg:#24272d; --chrome:#2b2e35; --panel:#2f333a; --border:#3a3e47; --row:#31353c;
+  --text:#dcdfe4; --muted:#959ba6; --quiet:#6c727d;
+  --blue:#74ade8; --green:#98c379; --amber:#e5c07b; --red:#e06c75;
+  --hover:#33373f; --selected:#2f3d52; --popover:#2e3138; --popover-hover:#3b3f48; --popover-border:#434852;
+  --blue-tint:#2a3647; --green-tint:#2c3a2e; --amber-tint:#3b3427; --red-tint:#3e2b2f;
+  --primary-text:#1e2127;
+  --ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  --mono: Menlo, ui-monospace, SFMono-Regular, monospace;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg:#fcfcfc; --chrome:#f3f3f4; --panel:#f6f6f7; --border:#e0e0e3; --row:#ededef;
+  --text:#2c2d31; --muted:#76787f; --quiet:#a2a4aa;
+  --blue:#2f6fde; --green:#3b7d3e; --amber:#a86a00; --red:#c2414b;
+  --hover:#ebebed; --selected:#e2e8f1; --popover:#f5f5f6; --popover-hover:#e5e5e8; --popover-border:#d8d8dc;
+  --blue-tint:#e7effc; --green-tint:#e8f3e9; --amber-tint:#fbf3e3; --red-tint:#fbe9ea;
+  --primary-text:#fff;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { font: 13px/1.4 var(--ui); color: var(--text); -webkit-font-smoothing: antialiased;
+  background: #15171a; display: grid; place-items: center; overflow: hidden; }
+:root[data-theme="light"] body { background: #d9dadd; }
+button, input { font: inherit; color: inherit; }
+svg.i { width: 14px; height: 14px; flex: none; display: block; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+kbd { font: 11px var(--ui); color: var(--quiet); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; line-height: 15px; display: inline-block; min-width: 17px; text-align: center; }
+::-webkit-scrollbar { width: 10px; }
+::-webkit-scrollbar-thumb { background: color-mix(in oklab, var(--quiet) 45%, transparent); border-radius: 6px; border: 3px solid transparent; background-clip: padding-box; }
+
+/* ── the window: 760 × 480, not resizable ─────────────────── */
+.window { width: 760px; height: 480px; background: var(--bg); border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+  box-shadow: 0 30px 80px rgba(0,0,0,.45); display: grid; grid-template-columns: 260px 1fr; position: relative; }
+:root[data-theme="light"] .window { box-shadow: 0 30px 80px rgba(0,0,0,.18); }
+
+/* left: brand + actions */
+.brand { background: var(--chrome); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 14px 16px 14px; user-select: none; }
+.lights { display: flex; gap: 8px; height: 14px; align-items: center; }
+.lights i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+.lights i:nth-child(1){background:#ff5f57} .lights i:nth-child(2),.lights i:nth-child(3){background:var(--border)}
+.hero { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; margin-top: -10px; }
+.logo { width: 76px; height: 76px; border-radius: 18px; display: grid; place-items: center; margin-bottom: 12px;
+  background: linear-gradient(155deg, #4b8fe0, #2c5fa8); box-shadow: 0 10px 28px rgba(47,111,222,.35), inset 0 1px 0 rgba(255,255,255,.25); }
+.logo svg { width: 42px; height: 42px; stroke: #fff; stroke-width: 1.6; fill: none; }
+.hero h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
+.hero .ver { color: var(--quiet); font-size: 12px; }
+.actions { display: flex; flex-direction: column; gap: 2px; margin-top: 22px; width: 100%; }
+.act { display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 10px; border-radius: 7px; border: 0; background: none; color: var(--text); text-align: left; cursor: default; }
+.act:hover { background: var(--hover); }
+.act svg { color: var(--muted); }
+.act span { flex: 1; }
+.act.primary svg { color: var(--blue); }
+.foot { display: flex; align-items: center; gap: 8px; color: var(--quiet); font-size: 11px; }
+.foot .sp { flex: 1; }
+.foot button { border: 0; background: none; color: var(--quiet); padding: 3px 5px; border-radius: 5px; cursor: default; display: flex; }
+.foot button:hover { background: var(--hover); color: var(--text); }
+
+/* right: connections */
+.list { display: flex; flex-direction: column; min-height: 0; }
+.top { display: flex; align-items: center; gap: 6px; padding: 12px 12px 8px; }
+.search { flex: 1; height: 30px; display: flex; align-items: center; gap: 7px; padding: 0 9px; border-radius: 7px; background: var(--chrome); border: 1px solid var(--border); color: var(--quiet); }
+.search:focus-within { border-color: var(--blue); box-shadow: 0 0 0 3px color-mix(in oklab, var(--blue) 22%, transparent); }
+.search input { border: 0; outline: 0; background: none; flex: 1; min-width: 0; color: var(--text); }
+.search input::placeholder { color: var(--quiet); }
+.ibtn { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 7px; border: 1px solid var(--border); background: var(--chrome); color: var(--muted); cursor: default; }
+.ibtn:hover { color: var(--text); background: var(--hover); }
+.scroll { flex: 1; overflow: auto; padding: 0 8px 10px; }
+.group { font-size: 11px; font-weight: 600; color: var(--quiet); letter-spacing: .04em; text-transform: uppercase; padding: 10px 8px 4px; }
+.row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px; cursor: default; user-select: none; position: relative; }
+.row:hover { background: var(--hover); }
+.row.sel { background: var(--selected); }
+.eng { width: 30px; height: 30px; border-radius: 8px; flex: none; display: grid; place-items: center; font: 700 11px var(--ui); color: #fff; letter-spacing: -.02em; }
+.eng.pg { background: #336791; } .eng.sl { background: #0f80cc; }
+.meta { flex: 1; min-width: 0; }
+.nm { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.nm mark { background: none; color: var(--blue); }
+.addr { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--mono); font-size: 11px; }
+.env { font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; padding: 1px 5px; border-radius: 4px; }
+.env.development { color: var(--green); background: var(--green-tint); }
+.env.staging { color: var(--amber); background: var(--amber-tint); }
+.env.production { color: var(--red); background: var(--red-tint); }
+.when { color: var(--quiet); font-size: 11px; white-space: nowrap; }
+.row .more { opacity: 0; border: 0; background: none; color: var(--quiet); width: 22px; height: 22px; border-radius: 5px; display: grid; place-items: center; cursor: default; }
+.row:hover .more, .row.sel .more { opacity: 1; } .row .more:hover { background: var(--popover-hover); color: var(--text); }
+.row:hover .when, .row.sel .when { display: none; }
+.row.busy .when { display: block; color: var(--blue); }
+.row.busy .more { display: none; }
+.spin { width: 12px; height: 12px; border: 1.5px solid color-mix(in oklab, var(--blue) 30%, transparent); border-top-color: var(--blue); border-radius: 50%; animation: s .7s linear infinite; display: inline-block; vertical-align: -2px; margin-right: 5px; }
+@keyframes s { to { transform: rotate(360deg); } }
+.row.err .addr { color: var(--red); font-family: var(--ui); }
+
+.hint { border-top: 1px solid var(--border); padding: 7px 14px; display: flex; gap: 14px; color: var(--quiet); font-size: 11px; }
+.hint span { display: flex; align-items: center; gap: 5px; }
+
+.empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--muted); text-align: center; padding: 30px; }
+.empty .big { width: 54px; height: 54px; border-radius: 14px; border: 1px dashed var(--popover-border); display: grid; place-items: center; color: var(--quiet); margin-bottom: 6px; }
+.empty .big svg { width: 24px; height: 24px; }
+.empty b { color: var(--text); font-size: 14px; }
+.btn { height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; border-radius: 7px; border: 1px solid var(--blue); background: var(--blue); color: var(--primary-text); font-weight: 500; margin-top: 8px; cursor: default; }
+
+/* context menu */
+.menu { position: absolute; z-index: 10; min-width: 190px; background: var(--popover); border: 1px solid var(--popover-border); border-radius: 8px; padding: 4px; box-shadow: 0 12px 32px rgba(0,0,0,.35); display: none; }
+.menu.on { display: block; }
+.menu div { display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 8px; border-radius: 5px; cursor: default; }
+.menu div:hover { background: var(--popover-hover); }
+.menu div svg { color: var(--muted); } .menu div span { flex: 1; }
+.menu div.danger { color: var(--red); } .menu div.danger svg { color: var(--red); }
+.menu hr { border: 0; border-top: 1px solid var(--popover-border); margin: 4px 2px; }
+
+/* mockup-only controls */
+.ctl { position: fixed; top: 14px; right: 14px; display: flex; gap: 6px; }
+.ctl button { height: 26px; padding: 0 10px; border-radius: 6px; border: 1px solid #444; background: #222; color: #ccc; font-size: 12px; cursor: pointer; }
+:root[data-theme="light"] .ctl button { background: #fff; border-color: #ccc; color: #333; }
+.note { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); color: #777; font-size: 12px; text-align: center; max-width: 760px; }
+</style>
+</head>
+<body>
+<div class="ctl">
+  <button onclick="toggleTheme()">Light / Dark</button>
+  <button onclick="toggleEmpty()">Toggle empty state</button>
+</div>
+
+<div class="window" id="win">
+  <aside class="brand">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="hero">
+      <div class="logo"><svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M3.5 9.5h17M3.5 14.5h17M9.5 9.5v10"/></svg></div>
+      <h1>Tables</h1>
+      <div class="ver">Version 0.1.0</div>
+      <div class="actions">
+        <button class="act primary"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>New connection…</span><kbd>⌘N</kbd></button>
+        <button class="act"><svg class="i" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span>Open SQLite file…</span><kbd>⌘O</kbd></button>
+      </div>
+    </div>
+    <div class="foot">
+      <span>4 connections</span><span class="sp"></span>
+      <button title="Settings"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+    </div>
+  </aside>
+
+  <section class="list" id="list"></section>
+
+  <div class="menu" id="menu">
+    <div><svg class="i" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg><span>Connect</span><kbd>↵</kbd></div>
+    <div><svg class="i" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg><span>Edit…</span><kbd>⌘E</kbd></div>
+    <div><svg class="i" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg><span>Duplicate</span><kbd>⌘D</kbd></div>
+    <hr>
+    <div class="danger"><svg class="i" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg><span>Delete</span><kbd>⌫</kbd></div>
+  </div>
+</div>
+
+<div class="note">Shown at launch and whenever the last workspace window closes. Click to select, double-click / ↵ to connect, ↑↓ to move, type to filter, right-click or ⋯ for actions. Connecting opens the full workspace window and closes this one; a failed connect stays here with the error inline.</div>
+
+<script>
+const CONNS = [
+  { name: 'local',        eng: 'pg', env: 'development', addr: 'localhost:5432 · adeton',     when: '2 min ago',  group: 'Recent' },
+  { name: 'observe',      eng: 'pg', env: 'staging',     addr: '127.0.0.1:5432 · observe',    when: 'Yesterday',  group: 'Recent' },
+  { name: 'knust',        eng: 'sl', env: 'development', addr: '~/data/knust.db',             when: '3 days ago', group: 'Recent' },
+  { name: 'adeton-prod',  eng: 'pg', env: 'production',  addr: 'db.adeton.app:5432 · adeton', when: 'Nov 12',     group: 'All', fail: true },
+  { name: 'fns',          eng: 'pg', env: 'development', addr: '127.0.0.1:5432 · fns',        when: 'Oct 30',     group: 'All' },
+  { name: 'ug',           eng: 'sl', env: 'development', addr: '~/data/ug.db',                when: 'Oct 2',      group: 'All' },
+];
+let sel = 0, q = '', empty = false, busy = -1, err = -1;
+const $ = s => document.querySelector(s);
+const esc = s => s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const hl = n => q ? esc(n).replace(new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + ')', 'i'), '<mark>$1</mark>') : esc(n);
+const shown = () => empty ? [] : CONNS.map((c, i) => ({ ...c, i })).filter(c => (c.name + ' ' + c.addr).toLowerCase().includes(q.toLowerCase()));
+
+function render(keepFocus) {
+  const list = shown();
+  if (empty) {
+    $('#list').innerHTML = `<div class="empty">
+      <div class="big"><svg class="i" viewBox="0 0 24 24"><ellipse cx="12" cy="5.5" rx="7" ry="2.5"/><path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></svg></div>
+      <b>No connections yet</b>
+      <div>Add a Postgres server or open a SQLite file to get started.</div>
+      <button class="btn"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New connection</button></div>`;
+    $('.foot span').textContent = 'No connections';
+    return;
+  }
+  $('.foot span').textContent = CONNS.length + ' connections';
+  sel = Math.max(0, Math.min(sel, list.length - 1));
+  let html = '', g = '';
+  list.forEach((c, k) => {
+    const grp = q ? 'Results' : c.group;
+    if (grp !== g) { g = grp; html += `<div class="group">${grp}</div>`; }
+    const isBusy = c.i === busy, isErr = c.i === err;
+    html += `<div class="row ${k === sel ? 'sel' : ''} ${isBusy ? 'busy' : ''} ${isErr ? 'err' : ''}" data-k="${k}">
+      <div class="eng ${c.eng}">${c.eng === 'pg' ? 'Pg' : 'SL'}</div>
+      <div class="meta"><div class="nm">${hl(c.name)}<span class="env ${c.env}">${c.env.slice(0,3)}</span></div>
+        <div class="addr">${isErr ? 'Connection refused (db.adeton.app:5432). Check the host is reachable.' : esc(c.addr)}</div></div>
+      <span class="when">${isBusy ? '<span class="spin"></span>Connecting…' : c.when}</span>
+      <button class="more" data-more="${k}"><svg class="i" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
+    </div>`;
+  });
+  if (!list.length) html = `<div class="empty"><b>No matches</b><div>Nothing named “${esc(q)}”.</div></div>`;
+  $('#list').innerHTML = `
+    <div class="top">
+      <label class="search"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg>
+        <input id="q" placeholder="Search connections" value="${esc(q)}" autocomplete="off"></label>
+      <button class="ibtn" title="New connection"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+    </div>
+    <div class="scroll">${html}</div>
+    <div class="hint"><span><kbd>↑</kbd><kbd>↓</kbd> select</span><span><kbd>↵</kbd> connect</span><span><kbd>⌘E</kbd> edit</span><span><kbd>⌘N</kbd> new</span></div>`;
+  const inp = $('#q');
+  inp.oninput = () => { q = inp.value; sel = 0; render(true); };
+  if (keepFocus !== false) { inp.focus(); inp.setSelectionRange(q.length, q.length); }
+  document.querySelectorAll('.row').forEach(r => {
+    const k = +r.dataset.k;
+    r.onclick = () => { sel = k; hideMenu(); render(); };
+    r.ondblclick = () => connect(k);
+    r.oncontextmenu = e => { e.preventDefault(); sel = k; render(); showMenu(e.clientX, e.clientY); };
+  });
+  document.querySelectorAll('.more').forEach(b => b.onclick = e => {
+    e.stopPropagation(); sel = +b.dataset.more; render(); const r = e.currentTarget.getBoundingClientRect(); showMenu(r.right - 190, r.bottom + 4);
+  });
+}
+function connect(k) {
+  const c = shown()[k]; if (!c || busy >= 0) return;
+  busy = c.i; err = -1; render();
+  setTimeout(() => {
+    busy = -1;
+    if (c.fail) { err = c.i; render(); }
+    else { render(); flash(`Opens workspace for “${c.name}” and closes this window`); }
+  }, 900);
+}
+function flash(t) {
+  const n = $('.note'), old = n.textContent; n.style.color = 'var(--blue)'; n.textContent = t;
+  setTimeout(() => { n.textContent = old; n.style.color = ''; }, 1800);
+}
+function showMenu(x, y) { const w = $('#win').getBoundingClientRect(), m = $('#menu'); m.style.left = (x - w.left) + 'px'; m.style.top = (y - w.top) + 'px'; m.classList.add('on'); }
+function hideMenu() { $('#menu').classList.remove('on'); }
+document.addEventListener('click', e => { if (!e.target.closest('.menu')) hideMenu(); });
+document.addEventListener('keydown', e => {
+  const n = shown().length;
+  if (e.key === 'ArrowDown') { sel = Math.min(n - 1, sel + 1); render(); e.preventDefault(); }
+  else if (e.key === 'ArrowUp') { sel = Math.max(0, sel - 1); render(); e.preventDefault(); }
+  else if (e.key === 'Enter') connect(sel);
+  else if (e.key === 'Escape') { if ($('#menu').classList.contains('on')) hideMenu(); else { q = ''; render(); } }
+});
+function toggleTheme() { const r = document.documentElement; r.dataset.theme = r.dataset.theme === 'light' ? '' : 'light'; }
+function toggleEmpty() { empty = !empty; render(); }
+render();
+</script>
+</body>
+</html>

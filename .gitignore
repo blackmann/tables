@@ -1,0 +1,5 @@
+target/
+*.sqlite
+.DS_Store
+build/
+.signing-identity
